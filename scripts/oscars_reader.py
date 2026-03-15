@@ -75,26 +75,48 @@ st.sidebar.header("Gewinner eintragen")
 
 # Gewinner über Dropdown (nur echte Nominierten)
 # Gewinner über Dropdown (nur echte Nominierten + leeres Feld als Default)
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import time
+
+# -------------------------
+# WINNER INPUT (SIDEBAR)
+# -------------------------
+
+# Session state für Zeitstempel
+if "award_times" not in st.session_state:
+    st.session_state.award_times = {}
+
 winners_pred = {}
 for col in pred_cols:
     cat_name = col.replace(" - Prediction","")
     options = [" "] + nominees_dict.get(cat_name, [])  # Leeres Feld vorne
+
     selected = st.sidebar.selectbox(
         f"{cat_name}",
         options=options,
-        index=0,  # Standard = leeres Feld
+        index=0,
         key=f"dropdown_{cat_name}"
     )
-    # Nur Punkte vergeben, wenn nicht leer
+
+    # Nur Punkte vergeben wenn nicht leer
     winners_pred[col] = selected if selected != " " else ""
+
+    # Zeit speichern wenn Award erstmals gesetzt wird
+    if selected != " " and col not in st.session_state.award_times:
+        st.session_state.award_times[col] = time.time()
 
 # -------------------------
 # SCORE CALCULATION
 # -------------------------
+
 scores = {player:0 for player in players}
+
 for col, winner in winners_pred.items():
     if winner == "":
         continue
+
     for _, row in df.iterrows():
         if row[col] == winner:
             scores[row[player_col]] += POINTS_PREDICTION
@@ -104,62 +126,126 @@ leaderboard = pd.DataFrame(scores.items(), columns=["Name","Punkte"]).sort_value
 # -------------------------
 # TABS
 # -------------------------
+
 categories = [c.replace(" - Prediction","") for c in pred_cols]
 tabs = st.tabs(["🏠 Übersicht"] + categories)
 
 # -------------------------
 # TAB 0: Übersicht
 # -------------------------
+
 with tabs[0]:
+
     st.header("🏆 Leaderboard")
     st.dataframe(leaderboard, use_container_width=True)
-
-    # st.subheader("📊 Punkteverteilung")
-    # st.bar_chart(leaderboard.set_index("Name"))
 
     # Fortschritt
     awards_done = sum(1 for w in winners_pred.values() if w != "")
     total_awards = len(pred_cols)
+
     st.progress(awards_done / total_awards)
     st.write(f"{awards_done} / {total_awards} Awards vergeben")
 
-    # Punkteentwicklung (echte Vergabereihenfolge)
+    # -------------------------
+    # Punkteentwicklung (ECHTE VERGABEREIHENFOLGE)
+    # -------------------------
+
     progress_scores = {player: 0 for player in players}
     history = []
     awards_order = []
 
-    for col in pred_cols:
-        winner = winners_pred.get(col, "")
-        awards_order.append(col.replace(" - Prediction",""))
-        row_scores = progress_scores.copy()
+    # Nur Awards mit gesetztem Winner
+    awarded_cols = [c for c in pred_cols if winners_pred.get(c,"") != ""]
+
+    # Nach Eingabezeit sortieren
+    awarded_cols_sorted = sorted(
+        awarded_cols,
+        key=lambda c: st.session_state.award_times.get(c, float("inf"))
+    )
+
+    for col in awarded_cols_sorted:
+
+        winner = winners_pred[col]
+        award_name = col.replace(" - Prediction","")
+
         for _, row in df.iterrows():
             if row[col] == winner:
-                row_scores[row[player_col]] += POINTS_PREDICTION
-        progress_scores = row_scores.copy()
+                progress_scores[row[player_col]] += POINTS_PREDICTION
+
         history.append(progress_scores.copy())
+        awards_order.append(award_name)
 
     if history:
+
         progress_df = pd.DataFrame(history, index=awards_order)
         progress_df.index.name = "Award"
+
         fig = go.Figure()
+
+        # aktueller Leader bestimmen
+        latest_scores = progress_df.iloc[-1]
+        leader = latest_scores.idxmax()
+
         for player in progress_df.columns:
-            fig.add_trace(go.Scatter(
-                x=progress_df.index,
-                y=progress_df[player],
-                mode="lines+markers",
-                name=player,
-                line=dict(color=player_colors[player], width=3),
-                marker=dict(size=10),
-                hovertemplate="%{y} Punkte<br>Award: %{x}<extra></extra>"
-            ))
+
+            is_leader = player == leader
+
+            fig.add_trace(
+                go.Scatter(
+                    x=progress_df.index,
+                    y=progress_df[player],
+                    mode="lines+markers+text",
+                    name=player,
+
+                    # Leader hervorheben
+                    line=dict(
+                        color=player_colors[player],
+                        width=5 if is_leader else 3,
+                        smoothing=1.1
+                    ),
+
+                    marker=dict(
+                        size=[8]*(len(progress_df)-1) + [16],
+                        color=player_colors[player],
+                        line=dict(width=2,color="white")
+                    ),
+
+                    # Name beim letzten Punkt anzeigen
+                    text=[""]*(len(progress_df)-1) + [player],
+                    textposition="middle right",
+
+                    hovertemplate=
+                    "<b>%{text}</b><br>" +
+                    "%{y} Punkte<br>" +
+                    "Award: %{x}<extra></extra>"
+                )
+            )
+
         fig.update_layout(
-            title="📈 Punkteentwicklung (live Vergabereihenfolge)",
+
+            title="📈 Oscar Prediction Race",
             xaxis_title="Vergebene Awards",
-            yaxis_title="Kumulative Punkte",
+            yaxis_title="Punkte",
+
+            template="plotly_white",
+
             legend_title="Spieler",
-            xaxis_tickangle=-45,
-            template="plotly_white"
+
+            xaxis=dict(
+                tickangle=-35,
+                showgrid=True
+            ),
+
+            yaxis=dict(
+                rangemode="tozero",
+                gridcolor="rgba(0,0,0,0.1)"
+            ),
+
+            hovermode="x unified",
+
+            height=500
         )
+
         st.plotly_chart(fig, use_container_width=True)
 
     # Tippmatrix
