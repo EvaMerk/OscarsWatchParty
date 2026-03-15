@@ -20,7 +20,7 @@ POINTS_PREDICTION = 1
 # -------------------------
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.readonly"
+    "https://www.googleapis.com/auth/drive"
 ]
 creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_FILE)
 client = gspread.authorize(creds)
