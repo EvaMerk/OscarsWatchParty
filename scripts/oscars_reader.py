@@ -22,9 +22,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
-creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_FILE)
-client = gspread.authorize(creds)
-sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+try:
+    creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    client = gspread.authorize(creds)
+    SPREADSHEET_ID = st.secrets["sheet_id"]
+    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+    st.write("✅ Service Account Zugriff OK")
+except Exception as e:
+    st.error(f"❌ Fehler bei Service Account Auth: {e}")
 data = sheet.get_all_records()
 df = pd.DataFrame(data)
 
