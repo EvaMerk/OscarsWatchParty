@@ -10,7 +10,8 @@ from functions import plot_vote_distribution  # external function
 # -------------------------
 # CONFIG
 # -------------------------
-SERVICE_ACCOUNT_FILE = "google_credentials.json"
+SERVICE_ACCOUNT_FILE = st.secrets["google"]
+#SERVICE_ACCOUNT_FILE = "google_credentials.json"
 SPREADSHEET_ID = "1ebdcv5O0yMJxGEHj68ef0dfg4gWtGwmj1YdRbCqzXS4"
 POINTS_PREDICTION = 1
 
