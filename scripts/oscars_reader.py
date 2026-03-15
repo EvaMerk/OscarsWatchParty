@@ -22,14 +22,21 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
+sheet = None  # Default, damit Name existiert
 try:
     creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     client = gspread.authorize(creds)
     SPREADSHEET_ID = st.secrets["sheet_id"]
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-    st.write("✅ Service Account Zugriff OK")
 except Exception as e:
     st.error(f"❌ Fehler bei Service Account Auth: {e}")
+
+# Jetzt prüfen, bevor du sheet benutzt
+if sheet:
+    records = sheet.get_all_records()
+    st.write(records[:5])
+else:
+    st.warning("Sheet konnte nicht geladen werden.")
 data = sheet.get_all_records()
 df = pd.DataFrame(data)
 
