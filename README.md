@@ -36,6 +36,11 @@ Notes: if someone submits more than once, only their latest answer counts. Names
 - **Award Overview** – awards per movie as a table, bar chart and pie chart
 - **Category tabs** – stacked bar charts of predictions and wishes per nominee, with the winner marked 👑
 
+## TO DO
+
+- **Support ties:** At the moment, only one winner can be selected per category. But when there's a tie, several nominees can win the same Oscar, which actually happened at the 2026 Oscars. The winner input should allow multiple selections, and everyone who picked one of the winners should get the point.
+
+
 ## ⚠️ Keep your credentials private
 
 Never commit `google_credentials.json`. Make sure it is listed in `.gitignore`.
