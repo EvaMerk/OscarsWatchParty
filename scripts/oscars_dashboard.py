@@ -1,6 +1,6 @@
 import os
 import time
-
+from collections import Counter
 import streamlit as st
 import pandas as pd
 import gspread
@@ -19,24 +19,41 @@ from functions import (
 # -------------------------
 # CONFIG
 # -------------------------
-SERVICE_ACCOUNT_FILE = "google_credentials.json"
-SPREADSHEET_ID = "1ebdcv5O0yMJxGEHj68ef0dfg4gWtGwmj1YdRbCqzXS4"
+# Instance-specific values live in scripts/.streamlit/secrets.toml (git-ignored).
+# See secrets.toml.example for the expected keys. Without a spreadsheet_id the
+# dashboard starts in demo mode using data/sample_responses.csv.
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+try:
+    if os.environ.get("OSCARS_DEMO"):
+        raise KeyError("demo mode forced via OSCARS_DEMO")
+    SPREADSHEET_ID = st.secrets["spreadsheet_id"]
+    # Resolve relative to this script so it works from any working directory
+    SERVICE_ACCOUNT_FILE = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        st.secrets.get("credentials_file", "google_credentials.json"),
+    )
+    DEMO_MODE = False
+except (FileNotFoundError, KeyError):
+    SPREADSHEET_ID = SERVICE_ACCOUNT_FILE = None
+    DEMO_MODE = True
 POINTS_PREDICTION = 1
 
 # -------------------------
-# GOOGLE SHEETS CONNECTION
+# DATA SOURCE: GOOGLE SHEETS (or demo CSV)
 # -------------------------
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.readonly"
-]
-creds = Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
-)
-client = gspread.authorize(creds)
-sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
+if DEMO_MODE:
+    df = pd.read_csv(os.path.join(repo_root, "data", "sample_responses.csv"))
+else:
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly"
+    ]
+    creds = Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+    df = pd.DataFrame(sheet.get_all_records())
 
 # -------------------------
 # DATA CLEANING
@@ -62,12 +79,11 @@ wish_cols = [c for c in award_cols if "Wunsch" in c]
 
 # Treat empty fields as abstention for calculation
 for col in pred_cols + wish_cols:
-    df[col] = df[col].fillna("").replace("", "Enthaltung")
+    df[col] = df[col].fillna("")
 
 # -------------------------
 # NOMINEES CSV
 # -------------------------
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 csv_path = os.path.join(repo_root, "data", "Oscar_Options.csv")
 df_nominees = pd.read_csv(csv_path, sep=",", header=None, names=["Category","Nominee"])
 
@@ -81,13 +97,19 @@ for cat, group in df_nominees.groupby("Category"):
 # STREAMLIT UI
 # -------------------------
 st.title("🏆 Oscars Watchparty Dashboard")
+if DEMO_MODE:
+    st.info(
+        "Demo mode: showing made-up predictions from `data/sample_responses.csv`. "
+        "Add a `spreadsheet_id` in `.streamlit/secrets.toml` to use your own Google Sheet."
+    )
 st.sidebar.header("Enter winners")
 
-# Winners via dropdown (only real nominees + empty default option)
 
 # -------------------------
 # WINNER INPUT (SIDEBAR)
 # -------------------------
+# Winners via multiselect (only real nominees). Several selections = a tie:
+# everyone who picked any of the winners gets the point.
 
 # Session state for timestamps
 if "award_times" not in st.session_state:
@@ -96,21 +118,21 @@ if "award_times" not in st.session_state:
 winners_pred = {}
 for col in pred_cols:
     cat_name = col.replace(" - Prediction","").strip()
-    options = [" "] + nominees_dict.get(cat_name, [])  # Leeres Feld vorne
-
-    selected = st.sidebar.selectbox(
+    selected = st.sidebar.multiselect(
         f"{cat_name}",
-        options=options,
-        index=0,
-        key=f"dropdown_{cat_name}"
-        )
+        options=nominees_dict.get(cat_name, []),
+        key=f"winners_{cat_name}",
+        help="Select more than one nominee in case of a tie.",
+    )
 
-    # Only award points when not empty
-    winners_pred[col] = selected if selected != " " else ""
+    # List of winners; empty list = not awarded yet
+    winners_pred[col] = selected
 
-    # Save time when award is first set
-    if selected != " " and col not in st.session_state.award_times:
+    # Save time when award is first set, forget it when cleared again
+    if selected and col not in st.session_state.award_times:
         st.session_state.award_times[col] = time.time()
+    elif not selected:
+        st.session_state.award_times.pop(col, None)
 
 # -------------------------
 # SCORE CALCULATION
@@ -118,12 +140,12 @@ for col in pred_cols:
 
 scores = {player:0 for player in players}
 
-for col, winner in winners_pred.items():
-    if winner == "":
+for col, winners in winners_pred.items():
+    if not winners:
         continue
 
     for _, row in df.iterrows():
-        if row[col] == winner:
+        if row[col] in winners:
             scores[row[player_col]] += POINTS_PREDICTION
 
 leaderboard = pd.DataFrame(scores.items(), columns=["Name","Points"]).sort_values("Points", ascending=False)
@@ -142,10 +164,10 @@ tabs = st.tabs(["🏠 Scoreboard"]  +["Award Overview"]+ categories)
 with tabs[0]:
 
     st.header("🏆 Leaderboard")
-    st.dataframe(leaderboard, use_container_width=True)
+    st.dataframe(leaderboard, width="stretch")
 
     # Progress
-    awards_done = sum(1 for w in winners_pred.values() if w != "")
+    awards_done = sum(1 for w in winners_pred.values() if w)
     total_awards = len(pred_cols)
 
     st.progress(awards_done / total_awards)
@@ -160,7 +182,7 @@ with tabs[0]:
     awards_order = []
 
     # Only awards with a set winner
-    awarded_cols = [c for c in pred_cols if winners_pred.get(c,"") != ""]
+    awarded_cols = [c for c in pred_cols if winners_pred.get(c)]
 
     # Sort by input time
     awarded_cols_sorted = sorted(
@@ -170,11 +192,11 @@ with tabs[0]:
 
     for col in awarded_cols_sorted:
 
-        winner = winners_pred[col]
+        winners = winners_pred[col]
         award_name = col.replace(" - Prediction","")
 
         for _, row in df.iterrows():
-            if row[col] == winner:
+            if row[col] in winners:
                 progress_scores[row[player_col]] += POINTS_PREDICTION
 
         history.append(progress_scores.copy())
@@ -188,7 +210,7 @@ with tabs[0]:
         # build the figure using the helper in scripts/functions.py
         fig = make_score_progress_figure(progress_df, player_colors)
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Prediction matrix
     st.header("🎬 Prediction tips per category")
@@ -198,7 +220,7 @@ with tabs[0]:
 
     # use highlight_correct from scripts/functions.py which expects (row, winners_pred)
     styled_table = prediction_table.style.apply(lambda row: highlight_correct(row, winners_pred), axis=1)
-    st.dataframe(styled_table, use_container_width=True)
+    st.dataframe(styled_table, width="stretch")
 # -------------------------
 # AWARD OVERVIEW
 # -------------------------
@@ -207,13 +229,17 @@ with tabs[1]:
 
     st.header("🎬 Award Overview")
 
-    # List of winners entered so far (only movie part, non-empty)
-    winners_list_awards = [extract_movie(w) for w in winners_pred.values() if w and w != ""]
+    # Movies that won so far. One award per movie per category, so two winners
+    # from the same movie in a tie still count once for that movie.
+    winners_list_awards = [
+        movie
+        for winners in winners_pred.values()
+        for movie in {extract_movie(w) for w in winners}
+    ]
 
     if len(winners_list_awards) == 0:
         st.info("No winners selected yet. Enter winners in the sidebar to populate the overview.")
     else:
-        from collections import Counter
 
         # Count how often each film was entered as a winner
         counts = Counter(winners_list_awards)
@@ -229,17 +255,17 @@ with tabs[1]:
         display_df = award_df if show_all else award_df[award_df["Awards"] > 0]
 
         st.subheader("Awards per Movie")
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width="stretch")
 
         # Bar chart: Number of awards per movie
         if not display_df.empty:
             fig_awards = make_awards_bar(display_df)
-            st.plotly_chart(fig_awards, use_container_width=True)
+            st.plotly_chart(fig_awards, width="stretch")
 
             # Pie chart: percentage share (only when at least 1 award has been given)
             if display_df["Awards"].sum() > 0:
                 fig_pie = make_awards_pie(display_df)
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")
 
 # -------------------------
 # CATEGORY TABS
@@ -262,21 +288,19 @@ for i, col in enumerate(pred_cols):
         )
 
         # Winner from sidebar
-        winner = winners_pred.get(col, "")
-        if winner and winner != "":
+        for winner in winners_pred.get(col, []):
             count = sum(df[col] == winner)
-            display_winner = winner
             fig_pred.add_annotation(
                 x=winner,
                 y=count,
-                text=f"👑 {display_winner}",
+                text=f"👑 {winner}",
                 showarrow=False,
                 yshift=10,
                 font=dict(size=14)
             )
 
         st.subheader("Prediction")
-        st.plotly_chart(fig_pred, use_container_width=True, key=f"pred_{category_name}")
+        st.plotly_chart(fig_pred, width="stretch", key=f"pred_{category_name}")
 
         # -------------------------
         # Wish chart
@@ -292,4 +316,4 @@ for i, col in enumerate(pred_cols):
                 all_options=nominees_dict.get(category_name, [])
             )
             st.subheader("Wish")
-            st.plotly_chart(fig_wish, use_container_width=True, key=f"wunsch_{category_name}")
+            st.plotly_chart(fig_wish, width="stretch", key=f"wunsch_{category_name}")

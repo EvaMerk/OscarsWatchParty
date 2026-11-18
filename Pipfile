@@ -7,6 +7,10 @@ name = "pypi"
 gspread = "*"
 google-auth = "*"
 pandas = "*"
+streamlit = "*"
+plotly = "*"
+certifi = "*"
+pillow = ">=13.0.0"
 
 [dev-packages]
 ipykernel = "*"

@@ -20,18 +20,18 @@ def highlight_correct(row, winners_pred: dict):
 
     The function expects `row.name` to be the category name (without " - Prediction").
     `winners_pred` is a dict mapping full column names (e.g. "Best Picture - Prediction")
-    to the selected winner string.
+    to a list of winner strings (several entries = a tie; empty = not awarded yet).
     """
     category = row.name + " - Prediction"
 
     if category not in winners_pred:
         return [""] * len(row)
 
-    winner_raw = winners_pred[category]
+    winners = winners_pred[category]
 
     return [
         "background-color: lightgreen; color: black"
-        if v == winner_raw else ""
+        if winners and v in winners else ""
         for v in row
     ]
 
